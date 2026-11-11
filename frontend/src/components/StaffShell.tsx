@@ -27,10 +27,7 @@ export function StaffShell({ live, children }: { live?: boolean; children: React
     <div className="min-h-dvh bg-canvas text-ink">
       <header className="sticky top-0 z-30 border-b border-line bg-surface/90 backdrop-blur">
         <div className="mx-auto flex h-14 max-w-[1400px] items-center gap-3 px-4 sm:px-6">
-          <div className="flex min-w-0 items-baseline gap-2">
-            <span className="font-display text-lg font-bold tracking-tight">FrictionlessOrder</span>
-            <span className="hidden truncate text-sm text-ink-faint md:inline">{restaurant.name}</span>
-          </div>
+          <span className="min-w-0 truncate font-display text-lg font-bold tracking-tight">{restaurant.name}</span>
 
           {links.length > 1 && (
             <nav className="ml-2 flex items-center gap-1" aria-label="Secciones">

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { errorMessage } from '../../lib/api';
+import { useRestaurantName } from '../../lib/restaurant';
 import { useAuth, useTheme } from '../../lib/session';
 import type { StaffRole } from '../../lib/types';
 import { STATUS_ORDER, TABLE_STATUS } from '../floor/tableStatus';
@@ -19,6 +20,9 @@ const DEMO_PASSWORD = 'demo1234';
 export function LoginPage() {
   useTheme(); // aplica el tema guardado también en el login
   const { session, login } = useAuth();
+  const restaurantName = useRestaurantName();
+  // Mientras llega el nombre se reserva su alto, para que nada salte al aparecer.
+  const brand = (className: string) => <p className={`min-h-7 font-display text-xl font-bold tracking-tight ${className}`}>{restaurantName}</p>;
   const navigate = useNavigate();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -43,7 +47,7 @@ export function LoginPage() {
     <main className="grid min-h-dvh bg-canvas text-ink lg:grid-cols-[1.1fr_1fr]">
       {/* El producto contado con su propia pieza central: las mesas y sus cinco estados */}
       <section className="floor-dots hidden flex-col justify-between border-r border-line bg-surface p-12 lg:flex">
-        <p className="font-display text-xl font-bold tracking-tight">FrictionlessOrder</p>
+        {brand('')}
         <div>
           <ul className="mb-10 flex gap-4" aria-label="Los cinco estados de una mesa">
             {STATUS_ORDER.map((status, i) => {
@@ -70,7 +74,7 @@ export function LoginPage() {
 
       <section className="flex items-center justify-center p-6">
         <div className="w-full max-w-sm">
-          <p className="mb-8 font-display text-xl font-bold tracking-tight lg:hidden">FrictionlessOrder</p>
+          {brand('mb-8 lg:hidden')}
           <h2 className="font-display text-3xl font-bold tracking-tight">Entrar</h2>
           <p className="mt-1 text-ink-soft">Acceso para el personal del restaurante.</p>
 

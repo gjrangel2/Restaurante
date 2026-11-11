@@ -1,6 +1,7 @@
 import { lazy, Suspense, type ReactNode } from 'react';
 import { Link, Navigate, Route, Routes } from 'react-router-dom';
 import { HOME_BY_ROLE, LoginPage } from './features/auth/LoginPage';
+import { useDocumentTitle } from './lib/restaurant';
 import { useAuth } from './lib/session';
 import type { StaffRole } from './lib/types';
 
@@ -51,6 +52,7 @@ function Loading() {
 }
 
 export function App() {
+  useDocumentTitle();
   return (
     <Suspense fallback={<Loading />}>
       <Routes>

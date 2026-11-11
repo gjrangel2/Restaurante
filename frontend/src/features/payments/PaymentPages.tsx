@@ -199,7 +199,7 @@ export function TestGatewayPage() {
     <main className="min-h-dvh bg-[repeating-linear-gradient(135deg,#FEF3C7_0_14px,#FDE68A_14px_28px)] p-4">
       <div className="mx-auto mt-6 max-w-sm overflow-hidden rounded-3xl bg-white shadow-lift">
         <div className="flex items-center gap-2 bg-tinta px-5 py-3 text-sm font-semibold text-maiz">
-          <FlaskConical className="h-4 w-4" aria-hidden /> Pasarela de pruebas de FrictionlessOrder
+          <FlaskConical className="h-4 w-4" aria-hidden /> Pasarela de pruebas
         </div>
         <div className="p-6 text-tinta">
           {error && <p className="mb-4 rounded-xl bg-red-50 p-3 text-sm text-red-800">{error}</p>}

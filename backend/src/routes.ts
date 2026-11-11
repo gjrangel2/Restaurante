@@ -126,9 +126,10 @@ api.post('/auth/login', async (req, res) => {
   });
 });
 
-// Mapa y medios de pago disponibles (para cualquier pantalla).
-api.get('/public/config', (_req, res) => {
-  res.json({ map: config.map, payments: availableChannels() });
+// Nombre del restaurante, mapa y medios de pago disponibles (para cualquier pantalla, también el login).
+api.get('/public/config', async (_req, res) => {
+  const restaurant = await getPublicRestaurant();
+  res.json({ restaurant: { name: restaurant.name }, map: config.map, payments: availableChannels() });
 });
 
 api.get('/auth/me', requireStaff(), async (req, res) => {
