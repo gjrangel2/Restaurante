@@ -1,0 +1,84 @@
+# =====================================================================
+# FrictionlessOrder · entorno local con Docker Desktop
+#
+#   docker compose up --build        levanta todo
+#   docker compose down              lo detiene (los datos se conservan)
+#   docker compose down -v           lo detiene y BORRA la base de datos
+#
+# Abre http://localhost:8080  (o http://<IP-de-tu-PC>:8080 desde el móvil)
+#
+# Los valores ${VAR:-defecto} se pueden cambiar en un archivo .env junto a
+# este (ver .env.example). Sin .env, arranca con los valores por defecto.
+# =====================================================================
+name: frictionless-order
+
+services:
+  # -------------------------------------------------------------------
+  # PostgreSQL. El esquema NO se crea aquí: lo aplica el backend al
+  # arrancar, leyendo db/migrations en orden (V1, V2, V3…).
+  # -------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-frictionless}
+      POSTGRES_USER: ${POSTGRES_USER:-frictionless}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-frictionless}
+      TZ: America/Bogota
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    ports:
+      # Solo desde tu PC, para conectar DBeaver/pgAdmin/psql. Cambia DB_PORT si el 5433 está ocupado.
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # -------------------------------------------------------------------
+  # API REST + WebSockets (Node.js, Express, Socket.IO)
+  # -------------------------------------------------------------------
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      PORT: 4000
+      DATABASE_URL: postgres://${POSTGRES_USER:-frictionless}:${POSTGRES_PASSWORD:-frictionless}@db:5432/${POSTGRES_DB:-frictionless}
+      JWT_SECRET: ${JWT_SECRET:-solo-para-desarrollo-cambia-este-secreto}
+      DEFAULT_RESTAURANT_SLUG: ${DEFAULT_RESTAURANT_SLUG:-fogon}
+      MIGRATIONS_DIR: /app/migrations
+      TZ: America/Bogota
+    volumes:
+      # Una sola copia de los scripts SQL: la carpeta del proyecto, en solo lectura.
+      - ./db/migrations:/app/migrations:ro
+    ports:
+      # Opcional: acceso directo a la API para depurar (http://localhost:4000/api/health).
+      - "127.0.0.1:${API_PORT:-4000}:4000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:4000/api/health || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  # -------------------------------------------------------------------
+  # Frontend React compilado y servido por nginx. nginx también reenvía
+  # /api y /socket.io al backend: el navegador solo habla con un origen,
+  # así que no hay CORS y el QR funciona igual desde cualquier móvil.
+  # -------------------------------------------------------------------
+  frontend:
+    build: ./frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PORT:-8080}:80"
+
+volumes:
+  db_data:

@@ -1,0 +1,7 @@
+node_modules/
+# Copias que deja la app de Claude al entregar archivos
+Claude outputs/
+dist/
+.env
+*.log
+.DS_Store

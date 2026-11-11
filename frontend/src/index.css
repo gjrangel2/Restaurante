@@ -1,0 +1,88 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Tema del personal (sala, cocina, admin).
+ * Los neutros cambian con la clase .dark en <html>; los colores de estado no:
+ * un naranja significa lo mismo de día y de noche.
+ */
+:root {
+  --canvas: 241 243 246;
+  --surface: 255 255 255;
+  --sunken: 247 248 250;
+  --line: 224 227 233;
+  --ink: 21 24 31;
+  --ink-soft: 73 80 96;
+  --ink-faint: 122 130 147;
+  --series: 98 80 214;
+  --state-free: 210 215 224;
+  --state-free-ink: 62 70 86;
+  color-scheme: light;
+}
+
+.dark {
+  --canvas: 17 20 27;
+  --surface: 26 30 39;
+  --sunken: 33 38 50;
+  --line: 47 53 68;
+  --ink: 238 240 244;
+  --ink-soft: 182 188 200;
+  --ink-faint: 131 139 155;
+  --series: 144 133 233;
+  --state-free: 58 65 81;
+  --state-free-ink: 200 205 216;
+  color-scheme: dark;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply font-sans antialiased;
+    margin: 0;
+  }
+
+  /* Foco visible siempre que se navega con teclado */
+  :focus-visible {
+    outline: 2px solid currentColor;
+    outline-offset: 2px;
+  }
+}
+
+@layer utilities {
+  /* Oculta la barra de scroll en carruseles horizontales (categorías, banners) */
+  .no-scrollbar {
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Respeta el área segura de los móviles con barra de gestos */
+  .pb-safe {
+    padding-bottom: max(env(safe-area-inset-bottom), 0.5rem);
+  }
+
+  /* Piso del salón: retícula de puntos que se adapta al tema */
+  .floor-dots {
+    background-image: radial-gradient(rgb(var(--ink-faint) / 0.28) 1px, transparent 1px);
+    background-size: 22px 22px;
+  }
+}
+
+/* Quien pide menos movimiento conserva la información, no la animación:
+   la mesa en rojo deja de parpadear pero mantiene su anillo y su icono. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,5 @@
+# Los scripts SQL y de shell se guardan siempre con saltos de línea LF,
+# también en Windows: se montan tal cual dentro de contenedores Linux.
+*.sql text eol=lf
+*.sh  text eol=lf
+*.conf text eol=lf
