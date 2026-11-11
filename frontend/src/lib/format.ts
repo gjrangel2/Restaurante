@@ -35,6 +35,12 @@ export function elapsed(iso: string, now = Date.now()): string {
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')}`;
 }
 
+/** "hace 5 min" o "ahora mismo", para frases que empiezan por "hace". */
+export const ago = (iso: string, now = Date.now()): string => {
+  const value = elapsed(iso, now);
+  return value === 'ahora' ? 'ahora mismo' : `hace ${value}`;
+};
+
 export const clock = (iso: string): string => new Date(iso).toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' });
 
 /** Reloj que se actualiza solo: los "hace 12 min" del mapa y de cocina avanzan sin recargar. */

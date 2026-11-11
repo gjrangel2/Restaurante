@@ -23,6 +23,9 @@ export interface TableDto {
     readyOrders: number; // comandas listas en cocina, por llevar a la mesa
     total: number;
     call: null | { id: string; type: 'WAITER' | 'BILL'; createdAt: string; guestAlias: string | null };
+    // Comensales que se unieron cuando la mesa ya había pedido y el camarero aún no ha visto.
+    lateGuests: Array<{ id: string; alias: string; color: string; joinedAt: string }>;
+    payingOnline: boolean; // un comensal está en la pasarela pagando la cuenta
   };
 }
 
@@ -42,7 +45,13 @@ const TABLE_SELECT = `
                       FROM waiter_calls c
                      WHERE c.session_id = s.id AND c.attended_at IS NULL
                      ORDER BY (c.type = 'BILL') DESC, c.created_at
-                     LIMIT 1)
+                     LIMIT 1),
+           'lateGuests', COALESCE((SELECT json_agg(json_build_object('id', g.id, 'alias', g.alias, 'color', g.color, 'joinedAt', g.joined_at)
+                                                   ORDER BY g.number)
+                                     FROM session_guests g
+                                    WHERE g.session_id = s.id AND g.joined_late AND g.late_ack_at IS NULL), '[]'::json),
+           'payingOnline', EXISTS (SELECT 1 FROM payment_intents pi
+                                    WHERE pi.session_id = s.id AND pi.status = 'PENDING' AND pi.expires_at > now())
          ) END AS session
     FROM restaurant_tables t
     LEFT JOIN table_sessions s ON s.table_id = t.id AND s.closed_at IS NULL`;
@@ -192,5 +201,22 @@ export async function attendCalls(staff: StaffClaims, tableId: string): Promise<
   });
 
   for (const sessionId of sessionIds) emit(rooms.session(sessionId), 'call:attended', { by: staff.name });
+  return publishTable(staff.rid, tableId);
+}
+
+/** Marca como vistos los avisos de comensales tardíos de la mesa (dentro de una transacción). */
+export async function acknowledgeLateGuests(db: Db, tableId: string, staffId: string): Promise<void> {
+  await db.query(
+    `UPDATE session_guests g SET late_ack_at = now(), late_ack_by = $2
+       FROM table_sessions s
+      WHERE s.id = g.session_id AND s.table_id = $1 AND s.closed_at IS NULL AND g.joined_late AND g.late_ack_at IS NULL`,
+    [tableId, staffId],
+  );
+}
+
+/** El camarero toca "Entendido" en el aviso de comensal tardío. */
+export async function ackLateGuests(staff: StaffClaims, tableId: string): Promise<TableDto> {
+  await getTable(staff.rid, tableId); // verifica que la mesa sea de este restaurante
+  await acknowledgeLateGuests(pool, tableId, staff.sub);
   return publishTable(staff.rid, tableId);
 }

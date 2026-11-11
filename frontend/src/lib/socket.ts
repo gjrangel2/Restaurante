@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { io, type Socket } from 'socket.io-client';
 
-type SocketAuth = { token: string } | { lobbyTable: number };
+type SocketAuth = { token: string } | { lobbyTable: number } | { trackingCode: string };
 
 /**
  * Abre una conexión Socket.IO mientras el componente esté montado y haya

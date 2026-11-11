@@ -1,6 +1,6 @@
 // Contratos compartidos con el backend (ver backend/src/modules/*.service.ts).
 
-export type StaffRole = 'ADMIN' | 'WAITER' | 'KITCHEN';
+export type StaffRole = 'ADMIN' | 'WAITER' | 'KITCHEN' | 'COURIER';
 
 export interface StaffUser {
   id: string;
@@ -32,6 +32,8 @@ export interface TableSessionSummary {
   readyOrders: number;
   total: number;
   call: null | { id: string; type: CallType; createdAt: string; guestAlias: string | null };
+  lateGuests: Array<{ id: string; alias: string; color: string; joinedAt: string }>;
+  payingOnline: boolean;
 }
 
 export interface RestaurantTable {
@@ -63,13 +65,19 @@ export interface OrderItem {
   status: ItemStatus;
 }
 
+export type OrderChannel = 'DINE_IN' | 'DELIVERY' | 'PICKUP';
+
 export interface Order {
   id: string;
   number: number;
   status: OrderStatus;
-  tableId: string;
-  tableNumber: number;
-  sessionId: string;
+  channel: OrderChannel;
+  tableId: string | null;
+  tableNumber: number | null;
+  sessionId: string | null;
+  deliveryId: string | null;
+  deliveryCode: string | null;
+  customerName: string | null;
   createdAt: string;
   confirmedAt: string | null;
   readyAt: string | null;
@@ -97,6 +105,7 @@ export interface BillPreview {
   currency: string;
   canCharge: boolean;
   ordersInProgress: number;
+  onlinePayment: null | { id: string; channel: string; expiresAt: string };
 }
 
 export type PaymentMethod = 'CASH' | 'CARD' | 'TRANSFER';
@@ -200,7 +209,7 @@ export interface CartChange {
 
 export type JoinResponse =
   | { state: 'CLOSED'; restaurant: RestaurantInfo; table: { id: string; number: number; zone: string } }
-  | { state: 'OPEN'; restaurant: RestaurantInfo; table: { id: string; number: number; zone: string }; token: string; guest: Guest };
+  | { state: 'OPEN'; restaurant: RestaurantInfo; table: { id: string; number: number; zone: string }; token: string; guest: Guest; joinedLate?: boolean };
 
 export interface GuestState {
   me: Guest;
@@ -256,4 +265,180 @@ export interface Category {
   sortOrder: number;
   isActive: boolean;
   productCount: number;
+}
+
+// --- Mapa y pagos en línea --------------------------------------------------
+
+export interface MapConfig {
+  tileUrl: string;
+  attribution: string;
+}
+
+export type PaymentChannel = 'WOMPI' | 'MERCADOPAGO' | 'PSE';
+
+export interface PaymentOption {
+  id: PaymentChannel;
+  label: string;
+  detail: string;
+  live: boolean; // false = pasarela de pruebas
+  via?: 'WOMPI' | 'MERCADOPAGO';
+}
+
+export type IntentStatus = 'PENDING' | 'APPROVED' | 'DECLINED' | 'ERROR' | 'EXPIRED';
+
+export interface PaymentIntentView {
+  reference: string;
+  status: IntentStatus;
+  purpose: 'DELIVERY' | 'TABLE_BILL';
+  channel: PaymentChannel;
+  live: boolean;
+  amount: number;
+  currency: string;
+  expiresAt: string;
+  description: string;
+  restaurantName: string;
+  trackingCode: string | null;
+  tableNumber: number | null;
+  invoiceNumber: string | null;
+  needsReview: boolean;
+}
+
+// --- Domicilios -------------------------------------------------------------
+
+export type DeliveryStatus = 'PENDING_PAYMENT' | 'PLACED' | 'ACCEPTED' | 'PREPARING' | 'READY' | 'ON_THE_WAY' | 'DELIVERED' | 'CANCELLED';
+export type DeliveryPayment = 'CASH' | 'CARD_ON_DELIVERY' | 'ONLINE';
+export type Vehicle = 'MOTO' | 'BICI' | 'CARRO';
+
+export interface DeliveryZone {
+  name: string;
+  maxKm: number;
+  fee: number;
+  travelMinutes: number;
+}
+
+export interface DeliveryConfig {
+  restaurant: {
+    name: string;
+    address: string | null;
+    phone: string | null;
+    lat: number | null;
+    lng: number | null;
+    currency: string;
+    taxName: string;
+    taxRate: number;
+    pricesIncludeTax: boolean;
+    deliveryEnabled: boolean;
+    pickupEnabled: boolean;
+    minOrder: number;
+    prepMinutes: number;
+  };
+  zones: DeliveryZone[];
+  payments: PaymentOption[];
+  map: MapConfig;
+}
+
+export interface DeliveryQuote {
+  inCoverage: boolean;
+  distanceKm: number;
+  zone: (DeliveryZone & { id: string }) | null;
+  fee: number;
+  etaMinutes: number;
+  maxKm: number;
+}
+
+export interface CourierSummary {
+  id: string;
+  name: string;
+  phone: string;
+  vehicle: Vehicle;
+  plate: string | null;
+  lat: number | null;
+  lng: number | null;
+  lastSeenAt: string | null;
+}
+
+export interface Courier extends CourierSummary {
+  isAvailable: boolean;
+  active: number;
+  deliveredToday: number;
+}
+
+export interface Delivery {
+  id: string;
+  code: string;
+  orderId: string;
+  orderNumber: number;
+  type: 'DELIVERY' | 'PICKUP';
+  status: DeliveryStatus;
+  createdAt: string;
+  placedAt: string | null;
+  acceptedAt: string | null;
+  readyAt: string | null;
+  pickedUpAt: string | null;
+  deliveredAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  estimatedAt: string | null;
+  customerName: string;
+  customerPhone: string;
+  addressLine: string | null;
+  addressDetails: string | null;
+  addressNotes: string | null;
+  lat: number | null;
+  lng: number | null;
+  distanceKm: number | null;
+  zoneName: string | null;
+  subtotal: number;
+  deliveryFee: number;
+  total: number;
+  paymentMethod: DeliveryPayment;
+  paid: boolean;
+  refundPending: boolean;
+  courier: CourierSummary | null;
+  items: Array<{ name: string; quantity: number; unitPrice: number; notes: string; status: string }>;
+}
+
+export interface Tracking {
+  code: string;
+  type: 'DELIVERY' | 'PICKUP';
+  status: DeliveryStatus;
+  trackingCode: string;
+  pin: string;
+  createdAt: string;
+  placedAt: string | null;
+  acceptedAt: string | null;
+  readyAt: string | null;
+  pickedUpAt: string | null;
+  deliveredAt: string | null;
+  cancelledAt: string | null;
+  cancelReason: string | null;
+  estimatedAt: string | null;
+  etaMinutes: number | null;
+  customerName: string;
+  addressLine: string | null;
+  addressDetails: string | null;
+  lat: number | null;
+  lng: number | null;
+  subtotal: number;
+  deliveryFee: number;
+  total: number;
+  paymentMethod: DeliveryPayment;
+  paid: boolean;
+  refundPending: boolean;
+  items: Array<{ name: string; quantity: number; unitPrice: number; notes: string }>;
+  restaurant: { name: string; address: string | null; phone: string | null; lat: number | null; lng: number | null; currency: string };
+  courier: { name: string; vehicle: Vehicle; plate: string | null; phone: string; lat: number | null; lng: number | null; lastSeenAt: string | null } | null;
+  track: Array<[number, number]>;
+}
+
+export interface DeliverySettings {
+  deliveryEnabled: boolean;
+  pickupEnabled: boolean;
+  minOrder: number;
+  prepMinutes: number;
+  address: string | null;
+  phone: string | null;
+  lat: number | null;
+  lng: number | null;
+  zones: DeliveryZone[];
 }

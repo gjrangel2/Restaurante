@@ -88,9 +88,12 @@ export async function joinTable(tableNumber: number, previousToken?: string) {
     }
 
     const number = seats!.next;
-    return queryOne<GuestDto>(
-      'INSERT INTO session_guests (session_id, number, alias, color) VALUES ($1, $2, $3, $4) RETURNING id, number, alias, color',
-      [sessionId, number, guestAlias(number), guestColor(number)],
+    // ¿Llega tarde? Si la mesa ya tiene comandas, el camarero debe enterarse para actualizar el pedido.
+    const late = Boolean(await queryOne(`SELECT 1 FROM orders WHERE session_id = $1 AND status <> 'CANCELLED' LIMIT 1`, [sessionId], db));
+    return queryOne<GuestDto & { joinedLate: boolean }>(
+      `INSERT INTO session_guests (session_id, number, alias, color, joined_late) VALUES ($1, $2, $3, $4, $5)
+       RETURNING id, number, alias, color, joined_late AS "joinedLate"`,
+      [sessionId, number, guestAlias(number), guestColor(number), late],
       db,
     );
   });
@@ -108,7 +111,11 @@ export async function joinTable(tableNumber: number, previousToken?: string) {
 
   await publishTable(restaurant.id, table.id); // el mapa muestra un comensal más
   await publishGuests(sessionId);
-  return { state: 'OPEN' as const, ...base, token, guest };
+  const { joinedLate, ...guestDto } = guest;
+  if (joinedLate) {
+    emit(rooms.staff(restaurant.id), 'guest:late', { tableId: table.id, tableNumber: table.number, alias: guest.alias, color: guest.color });
+  }
+  return { state: 'OPEN' as const, ...base, token, guest: guestDto, joinedLate };
 }
 
 /** Comensales de la sesión, marcando quién tiene la app abierta ahora mismo. */

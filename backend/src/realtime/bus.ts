@@ -17,6 +17,12 @@ import type { Server } from 'socket.io';
  *   inventory:alert    cocina y sala   insumos en amarillo o rojo tras una venta
  *   invoice:issued     sala      se cobró una mesa (refresca KPIs)
  *   session:closed     mesa      pago validado, la mesa se cerró
+ *   guest:late         sala      alguien se unió a una mesa que ya pidió
+ *   bill:paying        mesa      un comensal está pagando la cuenta en línea
+ *   payment:updated    sala      cambió un pago en línea (aprobado, rechazado…)
+ *   delivery:updated   sala, repartidores y el cliente que sigue el pedido
+ *   courier:location   sala (mapa de despacho) y el cliente del pedido en camino
+ *   couriers:updated   sala      cambió la disponibilidad de un repartidor
  */
 let io: Server | null = null;
 
@@ -35,6 +41,9 @@ export const rooms = {
   menu: (restaurantId: string) => `menu:${restaurantId}`, // cualquiera con la carta abierta
   session: (sessionId: string) => `session:${sessionId}`, // comensales de una mesa abierta
   lobby: (tableId: string) => `lobby:${tableId}`, // clientes esperando a que abran la mesa
+  couriers: (restaurantId: string) => `couriers:${restaurantId}`, // todos los repartidores del restaurante
+  courier: (userId: string) => `courier:${userId}`, // un repartidor (sus asignaciones)
+  delivery: (deliveryId: string) => `delivery:${deliveryId}`, // el cliente que sigue ese pedido
 };
 
 export function emit(room: string | string[], event: string, payload?: unknown): void {

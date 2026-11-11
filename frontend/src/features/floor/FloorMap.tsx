@@ -1,6 +1,6 @@
-import { ClipboardList, ConciergeBell, Users } from 'lucide-react';
+import { ClipboardList, ConciergeBell, CreditCard, UserPlus, Users } from 'lucide-react';
 import { useMemo, useState, type CSSProperties } from 'react';
-import { elapsed } from '../../lib/format';
+import { ago, elapsed } from '../../lib/format';
 import type { RestaurantTable, TableShape, TableStatus } from '../../lib/types';
 import { STATUS_ORDER, TABLE_STATUS, statusIcon, statusSentence } from './tableStatus';
 
@@ -138,6 +138,12 @@ export function FloorMap({ tables, selectedId, onSelect, now }: FloorMapProps) {
         <li className="flex items-center gap-1.5">
           <ConciergeBell className="h-4 w-4 text-state-served" aria-hidden /> Pedido listo para llevar a la mesa
         </li>
+        <li className="flex items-center gap-1.5">
+          <UserPlus className="h-4 w-4 text-state-occupied" aria-hidden /> Llegó alguien después del pedido
+        </li>
+        <li className="flex items-center gap-1.5">
+          <CreditCard className="h-4 w-4 text-state-occupied" aria-hidden /> Pagando en línea
+        </li>
       </ul>
     </section>
   );
@@ -175,7 +181,9 @@ function TableNode({ table, now, selected, dimmed, onSelect }: TableNodeProps) {
 
   const label =
     `Mesa ${table.number}, ${style.label.toLowerCase()}: ${statusSentence(table).toLowerCase()}` +
-    (table.status === 'FREE' ? `, ${table.seats} puestos` : `, hace ${elapsed(table.statusChangedAt, now)}`);
+    (table.status === 'FREE' ? `, ${table.seats} puestos` : `, ${ago(table.statusChangedAt, now)}`) +
+    (session?.lateGuests.length ? `, ${session.lateGuests.length === 1 ? 'llegó una persona' : `llegaron ${session.lateGuests.length} personas`} después del pedido` : '') +
+    (session?.payingOnline ? ', pagando en línea' : '');
 
   return (
     <button
@@ -219,8 +227,18 @@ function TableNode({ table, now, selected, dimmed, onSelect }: TableNodeProps) {
       </span>
 
       {/* Avisos: lo que el camarero tiene que hacer en esta mesa */}
-      {session && (session.pendingOrders > 0 || session.readyOrders > 0) && (
+      {session && (session.pendingOrders > 0 || session.readyOrders > 0 || session.lateGuests.length > 0 || session.payingOnline) && (
         <span className="absolute right-0 top-0 flex gap-1">
+          {session.lateGuests.length > 0 && (
+            <span className="grid h-6 w-6 animate-pop place-items-center rounded-full bg-state-occupied text-white shadow-lift" title="Llegó alguien después del pedido">
+              <UserPlus className="h-3.5 w-3.5" aria-hidden />
+            </span>
+          )}
+          {session.payingOnline && (
+            <span className="grid h-6 w-6 place-items-center rounded-full bg-surface text-state-occupied shadow-lift ring-1 ring-line" title="Pagando en línea">
+              <CreditCard className="h-3.5 w-3.5" aria-hidden />
+            </span>
+          )}
           {session.pendingOrders > 0 && (
             <span className="grid h-6 w-6 place-items-center rounded-full bg-surface text-state-waiting shadow-lift ring-1 ring-line" title="Comanda por confirmar">
               <ClipboardList className="h-3.5 w-3.5" aria-hidden />

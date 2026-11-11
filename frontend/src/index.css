@@ -74,6 +74,30 @@
   }
 }
 
+/* Mapas (Leaflet): tipografía de la app, marcadores sin la caja blanca por
+   defecto y controles que respetan el tema oscuro. */
+.leaflet-container {
+  font-family: inherit;
+}
+.leaflet-div-icon.fo-marker,
+.fo-marker {
+  background: transparent;
+  border: 0;
+}
+.leaflet-tooltip.fo-tooltip {
+  border-radius: 8px;
+  font-weight: 600;
+}
+.dark .leaflet-container .leaflet-bar a,
+.dark .leaflet-container .leaflet-control-attribution {
+  background: rgb(var(--surface) / 0.9);
+  color: rgb(var(--ink-soft));
+  border-color: rgb(var(--line));
+}
+.dark .leaflet-container .leaflet-control-attribution a {
+  color: rgb(var(--ink));
+}
+
 /* Quien pide menos movimiento conserva la información, no la animación:
    la mesa en rojo deja de parpadear pero mantiene su anillo y su icono. */
 @media (prefers-reduced-motion: reduce) {

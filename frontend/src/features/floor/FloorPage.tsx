@@ -43,13 +43,24 @@ export function FloorPage() {
     if (table.id === selectedId) setRefreshKey((key) => key + 1);
   });
 
+  // Los domicilios también viajan por estos eventos; sala solo atiende los de mesa.
   useSocketEvent<Order>(socket, 'order:created', (order) => {
+    if (order.channel !== 'DINE_IN') return;
     toast.show(`Mesa ${order.tableNumber}: comanda nueva por confirmar`, { emoji: '🧾' });
   });
 
   useSocketEvent<Order>(socket, 'order:updated', (order) => {
+    if (order.channel !== 'DINE_IN') return;
     if (order.tableId === selectedId) setRefreshKey((key) => key + 1);
     if (order.status === 'READY') toast.show(`Mesa ${order.tableNumber}: pedido listo en cocina`, { emoji: '🛎️' });
+  });
+
+  useSocketEvent<{ tableNumber: number; alias: string }>(socket, 'guest:late', ({ tableNumber, alias }) => {
+    toast.show(`Mesa ${tableNumber}: ${alias} llegó después del pedido. Actualiza el pedido.`, { emoji: '🙋' });
+  });
+
+  useSocketEvent<{ code: string; type: string }>(socket, 'delivery:new', ({ code, type }) => {
+    toast.show(`${type === 'PICKUP' ? 'Pedido para recoger' : 'Domicilio'} nuevo: ${code}`, { emoji: '🛵' });
   });
 
   useSocketEvent<{ tableNumber: number; type: CallType; guestAlias: string | null }>(socket, 'call:created', (call) => {

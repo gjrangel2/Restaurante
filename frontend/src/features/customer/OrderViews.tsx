@@ -1,8 +1,12 @@
-import { Check, CircleAlert, ReceiptText } from 'lucide-react';
+import { Check, CircleAlert, LoaderCircle, ReceiptText, Smartphone } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useToast } from '../../components/Toasts';
+import { api, errorMessage } from '../../lib/api';
 import { LazyImage } from '../../components/LazyImage';
 import { clock, money } from '../../lib/format';
-import type { Guest, Order, OrderStatus, RestaurantInfo } from '../../lib/types';
-import { GuestAvatar, Stepper } from './parts';
+import type { BillPreview, Guest, Order, OrderStatus, PaymentOption, RestaurantInfo } from '../../lib/types';
+import { PaymentPicker, type PaymentChoice } from '../payments/PaymentPicker';
+import { BottomSheet, GuestAvatar, Stepper } from './parts';
 import type { SharedCart } from './useSharedCart';
 
 // ----------------------------------------------------------------------------
@@ -166,6 +170,8 @@ function OrderTracker({ order }: { order: Order }) {
 // Pestaña "Cuenta": lo consumido hasta ahora y botón para pedir la cuenta
 // ----------------------------------------------------------------------------
 interface BillViewProps {
+  token: string;
+  refreshKey: number; // cambia cuando alguien empieza o termina un pago en línea
   orders: Order[];
   restaurant: RestaurantInfo;
   billRequested: boolean;
@@ -173,7 +179,7 @@ interface BillViewProps {
   onBrowse: () => void;
 }
 
-export function BillView({ orders, restaurant, billRequested, onRequestBill, onBrowse }: BillViewProps) {
+export function BillView({ token, refreshKey, orders, restaurant, billRequested, onRequestBill, onBrowse }: BillViewProps) {
   const { currency } = restaurant;
   const billable = orders.filter((order) => order.status !== 'CANCELLED');
   const consumed = billable.reduce((sum, order) => sum + order.total, 0);
@@ -246,20 +252,125 @@ export function BillView({ orders, restaurant, billRequested, onRequestBill, onB
         )}
       </dl>
 
+      <PayFromPhone token={token} refreshKey={refreshKey} ordersKey={orders.map((o) => `${o.id}:${o.status}`).join(',')} />
+
       {billRequested ? (
-        <p className="mt-5 flex items-center justify-center gap-2 rounded-full bg-hoja px-5 py-4 font-semibold text-white" role="status">
+        <p className="mt-3 flex items-center justify-center gap-2 rounded-full bg-hoja px-5 py-4 font-semibold text-white" role="status">
           <Check className="h-5 w-5" aria-hidden /> Cuenta pedida. Tu camarero ya viene.
         </p>
       ) : (
         <button
           type="button"
           onClick={onRequestBill}
-          className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-maiz text-lg font-bold text-tinta transition active:scale-[0.98]"
+          className="mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-full border-2 border-hoja/15 text-lg font-bold text-tinta transition active:scale-[0.98]"
         >
-          <ReceiptText className="h-5 w-5" aria-hidden /> Pedir la cuenta
+          <ReceiptText className="h-5 w-5" aria-hidden /> Pagar con el camarero
         </button>
       )}
-      <p className="mt-2 text-center text-sm text-tinta-soft">Pagas con tu camarero: efectivo, tarjeta o transferencia.</p>
+      <p className="mt-2 text-center text-sm text-tinta-soft">Con el camarero: efectivo, tarjeta o transferencia.</p>
     </div>
+  );
+}
+
+/**
+ * Pagar la cuenta de la mesa desde el celular. La mesa se cierra sola cuando
+ * la pasarela confirma el pago; mientras tanto, nadie más puede pagar ni
+ * pedir (así el total no cambia a mitad del pago).
+ */
+function PayFromPhone({ token, refreshKey, ordersKey }: { token: string; refreshKey: number; ordersKey: string }) {
+  const toast = useToast();
+  const [data, setData] = useState<{ bill: BillPreview | null; payments: PaymentOption[] } | null>(null);
+  const [open, setOpen] = useState(false);
+  const [tipRate, setTipRate] = useState<number | null>(null);
+  const [choice, setChoice] = useState<PaymentChoice | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get<{ bill: BillPreview | null; payments: PaymentOption[] }>('/guest/bill', token).then(setData).catch(() => undefined);
+  }, [token, refreshKey, ordersKey]);
+
+  const bill = data?.bill;
+  if (!bill || bill.totals.gross <= 0 || !data?.payments.length) return null;
+
+  const suggested = bill.suggestedTipRate;
+  const tip = tipRate ?? suggested;
+  const { subtotal, taxTotal } = bill.totals;
+  const tipTotal = Math.round((subtotal * tip) / 100);
+  const total = subtotal + taxTotal + tipTotal;
+
+  if (bill.onlinePayment) {
+    return (
+      <p className="mt-5 flex items-center justify-center gap-2 rounded-2xl bg-hoja-100 px-4 py-4 text-center font-semibold text-hoja" role="status">
+        <LoaderCircle className="h-5 w-5 animate-spin" aria-hidden /> Alguien de la mesa está pagando la cuenta…
+      </p>
+    );
+  }
+
+  const pay = async () => {
+    if (!choice) return;
+    setBusy(true);
+    try {
+      const result = await api.post<{ checkoutUrl: string }>('/guest/bill/checkout', { channel: choice, tipRate: tip }, token);
+      window.location.assign(result.checkoutUrl); // a la pasarela; vuelve a /pago/resultado
+    } catch (err) {
+      toast.show(errorMessage(err), { tone: 'error' });
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={!bill.canCharge}
+        onClick={() => setOpen(true)}
+        className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-maiz text-lg font-bold text-tinta transition active:scale-[0.98] disabled:opacity-50"
+      >
+        <Smartphone className="h-5 w-5" aria-hidden /> Pagar desde mi celular
+      </button>
+      {!bill.canCharge && bill.ordersInProgress > 0 && (
+        <p className="mt-2 text-center text-sm text-tinta-soft">Podrás pagar en línea cuando todos los platos estén en la mesa.</p>
+      )}
+
+      {open && (
+        <BottomSheet title="Pagar la cuenta" onClose={() => !busy && setOpen(false)}>
+          <div className="p-5 pt-6">
+            <h2 className="font-display text-2xl font-bold text-tinta">Pagar la cuenta</h2>
+            <p className="mt-1 text-sm text-tinta-soft">Al aprobarse el pago, la mesa queda cerrada y recibes la factura.</p>
+
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <span className="text-sm font-semibold text-tinta">Propina voluntaria</span>
+              <span className="flex overflow-hidden rounded-full border border-hoja/15 text-sm font-semibold">
+                {[0, suggested].map((rate) => (
+                  <button
+                    key={rate}
+                    type="button"
+                    aria-pressed={tip === rate}
+                    onClick={() => setTipRate(rate)}
+                    className={`px-4 py-1.5 ${tip === rate ? 'bg-hoja text-white' : 'text-tinta-soft'}`}
+                  >
+                    {rate === 0 ? 'Sin propina' : `${rate}%`}
+                  </button>
+                ))}
+              </span>
+            </div>
+
+            <div className="mt-4">
+              <PaymentPicker online={data.payments} value={choice} onChange={setChoice} />
+            </div>
+
+            <button
+              type="button"
+              disabled={!choice || busy}
+              onClick={() => void pay()}
+              className="mt-5 flex h-14 w-full items-center justify-between rounded-full bg-maiz px-6 text-lg font-bold text-tinta disabled:opacity-50"
+            >
+              <span>{busy ? 'Abriendo la pasarela…' : 'Pagar'}</span>
+              <span className="tabular-nums">{money(total, bill.currency)}</span>
+            </button>
+          </div>
+        </BottomSheet>
+      )}
+    </>
   );
 }

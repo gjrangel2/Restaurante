@@ -27,12 +27,13 @@ interface CustomerMenuProps {
   me: Guest;
   tableNumber: number;
   restaurant: RestaurantInfo;
+  joinedLate?: boolean; // llegó cuando la mesa ya había pedido
   onSessionClosed: (info: { reason: 'PAID' | 'CANCELLED'; invoiceNumber?: string; grandTotal?: number }) => void;
 }
 
 type Tab = 'menu' | 'order' | 'bill';
 
-export function CustomerMenu({ token, me, tableNumber, restaurant, onSessionClosed }: CustomerMenuProps) {
+export function CustomerMenu({ token, me, tableNumber, restaurant, joinedLate = false, onSessionClosed }: CustomerMenuProps) {
   const toast = useToast();
   const now = useNow();
   const { socket, connected } = useSocket({ token });
@@ -48,6 +49,8 @@ export function CustomerMenu({ token, me, tableNumber, restaurant, onSessionClos
   const [sending, setSending] = useState(false);
   const [activeCategory, setActiveCategory] = useState<string | null>(null);
   const [highlighted, setHighlighted] = useState<string | null>(null);
+  const [billKey, setBillKey] = useState(0);
+  const [lateNotice, setLateNotice] = useState(joinedLate);
 
   // --- Carrito compartido ---------------------------------------------------
   const cart = useSharedCart(socket, me, {
@@ -110,6 +113,14 @@ export function CustomerMenu({ token, me, tableNumber, restaurant, onSessionClos
     toast.show('Tu camarero va en camino', { emoji: '🙌' });
   });
   useSocketEvent<{ reason: 'PAID' | 'CANCELLED'; invoiceNumber?: string; grandTotal?: number }>(socket, 'session:closed', onSessionClosed);
+  useSocketEvent<{ alias: string }>(socket, 'bill:paying', ({ alias }) => {
+    setBillKey((k) => k + 1);
+    if (alias !== me.alias) toast.show(`${alias} está pagando la cuenta`, { emoji: '💳' });
+  });
+  useSocketEvent(socket, 'bill:payment-failed', () => {
+    setBillKey((k) => k + 1);
+    toast.show('El pago en línea no se completó. Pueden intentarlo de nuevo.', { tone: 'error' });
+  });
 
   // --- Banners vigentes según el reloj del cliente ---------------------------
   const promotions = useMemo(
@@ -191,6 +202,17 @@ export function CustomerMenu({ token, me, tableNumber, restaurant, onSessionClos
           <p className="sticky top-0 z-30 flex items-center justify-center gap-2 bg-tinta py-1.5 text-xs font-medium text-white" role="status">
             <WifiOff className="h-3.5 w-3.5" aria-hidden /> Sin conexión. Reintentando…
           </p>
+        )}
+
+        {tab === 'menu' && lateNotice && (
+          <div className="flex items-start gap-3 bg-maiz px-5 py-3 text-sm text-tinta" role="status">
+            <p className="flex-1">
+              <strong className="font-semibold">Tu mesa ya pidió.</strong> Lo que agregues se envía como un pedido nuevo; tu camarero ya sabe que llegaste.
+            </p>
+            <button type="button" onClick={() => setLateNotice(false)} className="font-semibold underline underline-offset-2">
+              Entendido
+            </button>
+          </div>
         )}
 
         {tab === 'menu' && (
@@ -297,6 +319,8 @@ export function CustomerMenu({ token, me, tableNumber, restaurant, onSessionClos
 
         {tab === 'bill' && (
           <BillView
+            token={token}
+            refreshKey={billKey}
             orders={orders}
             restaurant={{ ...restaurant, ...(menu?.restaurant ?? {}) }}
             billRequested={openCalls.includes('BILL')}

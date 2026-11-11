@@ -12,7 +12,8 @@ export default defineConfig({
     host: true, // accesible desde el móvil en la misma red
     port: 5173,
     proxy: {
-      '/api': { target: backend, changeOrigin: true },
+      // changeOrigin: false conserva el Host del navegador; con él se arman las URL de regreso de las pasarelas.
+      '/api': { target: backend, changeOrigin: false },
       '/socket.io': { target: backend, changeOrigin: true, ws: true },
     },
   },

@@ -2,11 +2,12 @@ import type { Server as HttpServer } from 'node:http';
 import { Server, type Socket } from 'socket.io';
 import { z } from 'zod';
 import { isSessionOpen } from '../auth/middleware.js';
-import { verifyToken, type Claims, type GuestClaims } from '../auth/tokens.js';
+import { verifyToken, type Claims, type GuestClaims, type StaffClaims } from '../auth/tokens.js';
 import { config } from '../config.js';
 import { queryOne } from '../db/pool.js';
 import { HttpError, parse } from '../http.js';
 import { addToCart, getCart, setCartQuantity } from '../modules/cart.service.js';
+import { updateCourierLocation } from '../modules/delivery.service.js';
 import { publishGuests } from '../modules/guests.service.js';
 import { getPublicRestaurant } from '../modules/restaurant.js';
 import { rooms, setIo } from './bus.js';
@@ -27,6 +28,8 @@ const setQuantitySchema = z.object({ itemId: z.string().uuid(), quantity: z.numb
  *                 mesa y puede editar el carrito compartido.
  *   · En espera → auth.lobbyTable = número de mesa. Sin token ni permisos:
  *                 solo escucha el aviso de que el camarero abrió la mesa.
+ *   · Domicilio → auth.trackingCode = código de seguimiento. Solo escucha
+ *                 el estado de su pedido y la ubicación de su repartidor.
  */
 export function initRealtime(httpServer: HttpServer): Server {
   const io = new Server(httpServer, {
@@ -36,13 +39,20 @@ export function initRealtime(httpServer: HttpServer): Server {
 
   io.use(async (socket, next) => {
     try {
-      const { token, lobbyTable } = socket.handshake.auth as { token?: string; lobbyTable?: number };
+      const { token, lobbyTable, trackingCode } = socket.handshake.auth as { token?: string; lobbyTable?: number; trackingCode?: string };
 
       if (token) {
         const claims = verifyToken(token);
         if (!claims) return next(new Error('UNAUTHORIZED'));
         if (claims.kind === 'guest' && !(await isSessionOpen(claims.sid))) return next(new Error('SESSION_CLOSED'));
         socket.data.claims = claims;
+        return next();
+      }
+
+      if (typeof trackingCode === 'string' && /^[A-Z0-9]{8,16}$/.test(trackingCode)) {
+        const delivery = await queryOne<{ id: string }>('SELECT id FROM delivery_orders WHERE tracking_code = $1', [trackingCode]);
+        if (!delivery) return next(new Error('NOT_FOUND'));
+        socket.data.deliveryId = delivery.id;
         return next();
       }
 
@@ -67,15 +77,18 @@ export function initRealtime(httpServer: HttpServer): Server {
     const claims = socket.data.claims as Claims | undefined;
 
     if (!claims) {
-      void socket.join(rooms.lobby(socket.data.lobbyTableId));
+      if (socket.data.deliveryId) void socket.join(rooms.delivery(socket.data.deliveryId));
+      else void socket.join(rooms.lobby(socket.data.lobbyTableId));
       return;
     }
 
     void socket.join(rooms.menu(claims.rid));
 
     if (claims.kind === 'staff') {
-      if (claims.role !== 'KITCHEN') void socket.join(rooms.staff(claims.rid));
-      if (claims.role !== 'WAITER') void socket.join(rooms.kitchen(claims.rid));
+      // Sala y despacho: Admin y Camarero. Cocina: Admin y Cocina. Repartidores: su propia sala.
+      if (claims.role === 'ADMIN' || claims.role === 'WAITER') void socket.join(rooms.staff(claims.rid));
+      if (claims.role === 'ADMIN' || claims.role === 'KITCHEN') void socket.join(rooms.kitchen(claims.rid));
+      if (claims.role === 'COURIER') registerCourier(socket, claims);
       return;
     }
 
@@ -83,6 +96,33 @@ export function initRealtime(httpServer: HttpServer): Server {
   });
 
   return io;
+}
+
+const locationSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+  heading: z.number().min(0).max(360).optional(),
+});
+
+/** El celular del repartidor envía su ubicación mientras tiene la app abierta. */
+function registerCourier(socket: Socket, courier: StaffClaims): void {
+  void socket.join(rooms.couriers(courier.rid));
+  void socket.join(rooms.courier(courier.sub));
+
+  let lastAt = 0;
+  socket.on('courier:location', async (payload: unknown, ack?: Ack) => {
+    try {
+      if (Date.now() - lastAt < 2_000) throw new HttpError(429, 'TOO_FAST', 'Ubicación ignorada: llegan demasiado seguido');
+      lastAt = Date.now();
+      const point = parse(locationSchema, payload);
+      await updateCourierLocation(courier, { ...point, heading: point.heading === undefined ? undefined : Math.round(point.heading) % 360 });
+      if (typeof ack === 'function') ack({ ok: true });
+    } catch (err) {
+      const error = err instanceof HttpError ? { code: err.code, message: err.message } : { code: 'INTERNAL', message: 'No se pudo registrar la ubicación' };
+      if (!(err instanceof HttpError)) console.error('[ws] error en ubicación del repartidor:', err);
+      if (typeof ack === 'function') ack({ ok: false, error });
+    }
+  });
 }
 
 function registerGuest(socket: Socket, guest: GuestClaims): void {

@@ -7,6 +7,7 @@ import { getRestaurant, type Restaurant } from './restaurant.js';
 import { publishTable, refreshTableStatus } from './tables.service.js';
 
 // Cambia estas dos líneas para conectar proveedores reales (ver billing/providers.ts).
+// El datáfono/caja (POS) es independiente de las pasarelas en línea de payments/gateways.ts.
 const paymentGateway: PaymentGateway = mockPaymentGateway;
 const eInvoiceProvider: EInvoiceProvider = mockEInvoiceProvider;
 
@@ -18,19 +19,25 @@ export interface BillTotals {
   taxTotal: number;
   tipRate: number;
   tipTotal: number;
+  deliveryFee: number;
   grandTotal: number;
 }
+
+const roundFor = (restaurant: Restaurant) => {
+  const decimals = restaurant.currency === 'COP' ? 0 : 2;
+  return (value: number) => Math.round(value * 10 ** decimals) / 10 ** decimals;
+};
 
 /**
  * Liquidación de impuestos.
  *   · Si la carta ya incluye el impuesto (lo habitual de cara al consumidor),
  *     se desglosa hacia atrás: impuesto = total − total / (1 + tarifa).
  *   · La propina es voluntaria: se calcula sobre la base y nunca la aumenta.
+ *   · El domicilio va en su propia línea, fuera de la base del impuesto.
  * Tarifa y nombre del impuesto vienen de la configuración del restaurante.
  */
-export function computeTotals(restaurant: Restaurant, gross: number, tipRate: number): BillTotals {
-  const decimals = restaurant.currency === 'COP' ? 0 : 2;
-  const round = (value: number) => Math.round(value * 10 ** decimals) / 10 ** decimals;
+export function computeTotals(restaurant: Restaurant, gross: number, tipRate: number, deliveryFee = 0): BillTotals {
+  const round = roundFor(restaurant);
   const rate = restaurant.taxRate / 100;
 
   const taxTotal = restaurant.pricesIncludeTax ? round(gross - gross / (1 + rate)) : round(gross * rate);
@@ -45,17 +52,21 @@ export function computeTotals(restaurant: Restaurant, gross: number, tipRate: nu
     taxTotal,
     tipRate,
     tipTotal,
-    grandTotal: round(subtotal + taxTotal + tipTotal),
+    deliveryFee,
+    grandTotal: round(subtotal + taxTotal + tipTotal + deliveryFee),
   };
 }
 
-interface OpenBill {
+// ----------------------------------------------------------------------------
+// Cuenta de una mesa
+// ----------------------------------------------------------------------------
+export interface OpenBill {
   sessionId: string;
   gross: number;
   ordersInProgress: number;
 }
 
-async function loadOpenBill(db: Db | undefined, restaurantId: string, tableId: string, lock: boolean): Promise<OpenBill | null> {
+export async function loadOpenBill(db: Db | undefined, restaurantId: string, tableId: string, lock: boolean): Promise<OpenBill | null> {
   const session = await queryOne<{ id: string }>(
     `SELECT id FROM table_sessions WHERE table_id = $1 AND restaurant_id = $2 AND closed_at IS NULL ${lock ? 'FOR UPDATE' : ''}`,
     [tableId, restaurantId],
@@ -74,21 +85,159 @@ async function loadOpenBill(db: Db | undefined, restaurantId: string, tableId: s
   return { sessionId: session.id, gross: sums!.gross, ordersInProgress: sums!.in_progress };
 }
 
-/** Vista previa de la cuenta para el panel de la mesa (no escribe nada). */
+/** Pago en línea en curso de una mesa (un cliente está en la pasarela). */
+export async function pendingTablePayment(db: Db | undefined, sessionId: string) {
+  return queryOne<{ id: string; channel: string; expiresAt: string }>(
+    `SELECT id, channel, expires_at AS "expiresAt" FROM payment_intents
+      WHERE session_id = $1 AND status = 'PENDING' AND expires_at > now()`,
+    [sessionId],
+    db,
+  );
+}
+
+/** Vista previa de la cuenta para el panel de la mesa y para el celular del cliente (no escribe nada). */
 export async function previewBill(restaurantId: string, tableId: string, tipRate?: number) {
   const restaurant = await getRestaurant(restaurantId);
   const bill = await loadOpenBill(undefined, restaurantId, tableId, false);
   if (!bill) return null;
+  const online = await pendingTablePayment(undefined, bill.sessionId);
   return {
     totals: computeTotals(restaurant, bill.gross, tipRate ?? restaurant.suggestedTipRate),
     suggestedTipRate: restaurant.suggestedTipRate,
     currency: restaurant.currency,
     // Con comandas en curso no se cobra: primero se entregan o se rechazan.
-    canCharge: bill.gross > 0 && bill.ordersInProgress === 0,
+    canCharge: bill.gross > 0 && bill.ordersInProgress === 0 && !online,
     ordersInProgress: bill.ordersInProgress,
+    onlinePayment: online, // si alguien está pagando desde el celular
   };
 }
 
+// ----------------------------------------------------------------------------
+// Emisión de factura (mesa o domicilio) + registro del pago aprobado
+// ----------------------------------------------------------------------------
+export interface IssueInput {
+  target: { sessionId: string; tableId: string } | { deliveryOrderId: string };
+  totals: BillTotals;
+  customer: { name?: string; doc?: string; email?: string };
+  payment: {
+    method: PaymentMethod;
+    amountReceived: number;
+    changeDue: number;
+    reference: string;
+    provider: string; // POS, WOMPI, MERCADOPAGO, MOCK
+    intentId?: string;
+    validatedBy?: string | null;
+  };
+}
+
+export interface IssuedInvoice {
+  invoiceId: string;
+  invoiceNumber: string;
+  cufe: string;
+  issuedAt: Date;
+  simulated: boolean;
+}
+
+/**
+ * Emite la factura electrónica y registra el pago aprobado, dentro de la
+ * transacción del llamador. Si ya había un borrador (intentos rechazados en
+ * caja), lo completa; si la factura ya estaba emitida, se niega.
+ */
+export async function issueInvoice(db: Db, restaurant: Restaurant, input: IssueInput): Promise<IssuedInvoice> {
+  const bySession = 'sessionId' in input.target;
+  const targetId = bySession ? (input.target as { sessionId: string }).sessionId : (input.target as { deliveryOrderId: string }).deliveryOrderId;
+  const existing = await queryOne<{ id: string; status: string }>(
+    `SELECT id, status FROM invoices WHERE ${bySession ? 'session_id' : 'delivery_order_id'} = $1 FOR UPDATE`,
+    [targetId],
+    db,
+  );
+  if (existing?.status === 'ISSUED') throw conflict('Esta cuenta ya fue facturada', 'ALREADY_INVOICED');
+
+  const issuedAt = new Date();
+  const seq = await queryOne<{ n: number }>(`SELECT nextval('invoice_number_seq') AS n`, [], db);
+  const invoiceNumber = `${restaurant.invoicePrefix}${seq!.n}`;
+  const customerDoc = input.customer.doc || '222222222222';
+  const t = input.totals;
+  // Con un proveedor real, esta llamada externa conviene hacerla antes de abrir la transacción.
+  const eInvoice = await eInvoiceProvider.issue({
+    invoiceNumber,
+    issuerTaxId: restaurant.taxId,
+    customerDoc,
+    subtotal: t.subtotal,
+    taxTotal: t.taxTotal,
+    grandTotal: t.grandTotal,
+    issuedAt,
+  });
+
+  const values = [
+    t.subtotal, t.taxName, t.taxRate, t.taxTotal, t.tipRate, t.tipTotal, t.deliveryFee, t.grandTotal,
+    input.customer.name || 'Consumidor final', customerDoc, input.customer.email || null,
+    invoiceNumber, eInvoice.cufe, eInvoice.provider, JSON.stringify(eInvoice.raw), issuedAt,
+  ];
+  let invoiceId: string;
+  if (existing) {
+    await db.query(
+      `UPDATE invoices SET subtotal = $1, tax_name = $2, tax_rate = $3, tax_total = $4, tip_rate = $5, tip_total = $6, delivery_fee = $7,
+              grand_total = $8, customer_name = $9, customer_doc = $10, customer_email = $11, invoice_number = $12, cufe = $13,
+              provider = $14, provider_response = $15, issued_at = $16, status = 'ISSUED'
+        WHERE id = $17`,
+      [...values, existing.id],
+    );
+    invoiceId = existing.id;
+  } else {
+    const target = input.target;
+    const row = await queryOne<{ id: string }>(
+      `INSERT INTO invoices (subtotal, tax_name, tax_rate, tax_total, tip_rate, tip_total, delivery_fee, grand_total, customer_name,
+                             customer_doc, customer_email, invoice_number, cufe, provider, provider_response, issued_at, status,
+                             restaurant_id, session_id, table_id, delivery_order_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, 'ISSUED', $17, $18, $19, $20)
+       RETURNING id`,
+      [
+        ...values,
+        restaurant.id,
+        'sessionId' in target ? target.sessionId : null,
+        'sessionId' in target ? target.tableId : null,
+        'deliveryOrderId' in target ? target.deliveryOrderId : null,
+      ],
+      db,
+    );
+    invoiceId = row!.id;
+  }
+
+  const p = input.payment;
+  await db.query(
+    `INSERT INTO payments (invoice_id, method, amount, amount_received, change_due, status, reference, provider, payment_intent_id, validated_by, validated_at)
+     VALUES ($1, $2, $3, $4, $5, 'APPROVED', $6, $7, $8, $9, now())`,
+    [invoiceId, p.method, t.grandTotal, p.amountReceived, p.changeDue, p.reference, p.provider, p.intentId ?? null, p.validatedBy ?? null],
+  );
+
+  return { invoiceId, invoiceNumber, cufe: eInvoice.cufe, issuedAt, simulated: eInvoice.provider === 'MOCK' };
+}
+
+/**
+ * Cierra la sesión de una mesa ya pagada. El trigger trg_guard_session_close
+ * verifica en la base de datos que la factura emitida esté cubierta por
+ * pagos aprobados; si no, la transacción completa se revierte.
+ */
+export async function closePaidSession(db: Db, sessionId: string, tableId: string, closedBy: string | null): Promise<void> {
+  await db.query('DELETE FROM cart_items WHERE session_id = $1', [sessionId]);
+  await db.query('UPDATE waiter_calls SET attended_at = now(), attended_by = $2 WHERE session_id = $1 AND attended_at IS NULL', [sessionId, closedBy]);
+  await db.query(`UPDATE table_sessions SET closed_at = now(), closed_by = $2, close_reason = 'PAID' WHERE id = $1`, [sessionId, closedBy]);
+  await refreshTableStatus(db, tableId);
+}
+
+/** Avisos en tiempo real tras cerrar una mesa pagada (después del COMMIT). */
+export async function publishTableClosed(restaurantId: string, tableId: string, sessionId: string, invoiceNumber: string, grandTotal: number) {
+  const table = await publishTable(restaurantId, tableId);
+  emit(rooms.session(sessionId), 'session:closed', { reason: 'PAID', invoiceNumber, grandTotal });
+  getIo().in(rooms.session(sessionId)).socketsLeave(rooms.session(sessionId));
+  emit(rooms.staff(restaurantId), 'invoice:issued', { invoiceNumber, tableNumber: table.number, grandTotal });
+  return table;
+}
+
+// ----------------------------------------------------------------------------
+// Cobro en caja (camarero)
+// ----------------------------------------------------------------------------
 export interface PayInput {
   method: PaymentMethod;
   amountReceived: number;
@@ -117,15 +266,14 @@ export interface InvoiceDto {
 }
 
 /**
- * Cobrar y cerrar la mesa. Es el ÚNICO camino para cerrar una mesa que consumió:
+ * Cobrar y cerrar la mesa desde caja. Junto con el pago en línea del cliente
+ * (payments.service.ts), es el único camino para cerrar una mesa que consumió:
  *
  *   1. Se liquida la cuenta y se guarda la factura en borrador.
  *   2. La pasarela valida el pago. Si lo rechaza, queda registrado el intento
  *      y la mesa sigue abierta.
- *   3. Con el pago aprobado, en una sola transacción: pago aprobado → factura
- *      emitida → sesión cerrada → mesa libre. El trigger
- *      trg_guard_session_close impide en la base de datos cerrar la sesión
- *      sin ese pago.
+ *   3. Con el pago aprobado, en una sola transacción: factura emitida → pago
+ *      aprobado → sesión cerrada → mesa libre.
  *   4. El token de sesión de los clientes deja de servir en ese instante.
  */
 export async function payAndClose(staff: StaffClaims, tableId: string, input: PayInput): Promise<InvoiceDto> {
@@ -135,24 +283,22 @@ export async function payAndClose(staff: StaffClaims, tableId: string, input: Pa
   const draft = await tx(async (db) => {
     const bill = await loadOpenBill(db, staff.rid, tableId, true);
     if (!bill) throw conflict('La mesa no está abierta', 'TABLE_NOT_OPEN');
+    if (await pendingTablePayment(db, bill.sessionId)) {
+      throw conflict('Un cliente está pagando esta cuenta en línea. Espera a que termine o a que expire.', 'ONLINE_PAYMENT_IN_PROGRESS');
+    }
     if (bill.ordersInProgress > 0) throw conflict('Hay comandas en curso: entrégalas o recházalas antes de cobrar', 'ORDERS_IN_PROGRESS');
     if (bill.gross <= 0) throw conflict('Esta mesa no tiene consumo. Usa "Cerrar sin consumo".', 'NOTHING_TO_BILL');
 
     const totals = computeTotals(restaurant, bill.gross, input.tipRate);
     const invoice = await queryOne<{ id: string }>(
-      `INSERT INTO invoices (restaurant_id, session_id, table_id, subtotal, tax_name, tax_rate, tax_total, tip_rate, tip_total,
-                             grand_total, customer_name, customer_doc, customer_email)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, COALESCE($11, 'Consumidor final'), COALESCE($12, '222222222222'), $13)
+      `INSERT INTO invoices (restaurant_id, session_id, table_id, subtotal, tax_name, tax_rate, tax_total, tip_rate, tip_total, grand_total)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (session_id) DO UPDATE
-         SET subtotal = EXCLUDED.subtotal, tax_total = EXCLUDED.tax_total, tip_rate = EXCLUDED.tip_rate, tip_total = EXCLUDED.tip_total,
-             grand_total = EXCLUDED.grand_total, customer_name = EXCLUDED.customer_name, customer_doc = EXCLUDED.customer_doc,
-             customer_email = EXCLUDED.customer_email
+         SET subtotal = EXCLUDED.subtotal, tax_total = EXCLUDED.tax_total, tip_rate = EXCLUDED.tip_rate,
+             tip_total = EXCLUDED.tip_total, grand_total = EXCLUDED.grand_total
        WHERE invoices.status = 'DRAFT'
        RETURNING id`,
-      [
-        staff.rid, bill.sessionId, tableId, totals.subtotal, totals.taxName, totals.taxRate, totals.taxTotal, totals.tipRate,
-        totals.tipTotal, totals.grandTotal, input.customerName || null, input.customerDoc || null, input.customerEmail || null,
-      ],
+      [staff.rid, bill.sessionId, tableId, totals.subtotal, totals.taxName, totals.taxRate, totals.taxTotal, totals.tipRate, totals.tipTotal, totals.grandTotal],
       db,
     );
     if (!invoice) throw conflict('Esta cuenta ya fue facturada', 'ALREADY_INVOICED');
@@ -174,55 +320,36 @@ export async function payAndClose(staff: StaffClaims, tableId: string, input: Pa
     throw new HttpError(402, 'PAYMENT_REJECTED', payment.reason ?? 'El pago fue rechazado');
   }
 
-  // 3) Emisión de la factura y cierre de la mesa
-  const issuedAt = new Date();
-  const seq = await queryOne<{ n: number }>(`SELECT nextval('invoice_number_seq') AS n`);
-  const invoiceNumber = `${restaurant.invoicePrefix}${seq!.n}`;
-  const customerDoc = input.customerDoc || '222222222222';
-  const eInvoice = await eInvoiceProvider.issue({
-    invoiceNumber,
-    issuerTaxId: restaurant.taxId,
-    customerDoc,
-    subtotal: draft.totals.subtotal,
-    taxTotal: draft.totals.taxTotal,
-    grandTotal: draft.totals.grandTotal,
-    issuedAt,
-  });
-
-  await tx(async (db) => {
+  // 3) Factura emitida y mesa cerrada
+  const issued = await tx(async (db) => {
     // Si entró una comanda nueva entre la liquidación y el pago, la cuenta cambió: no se cierra.
-    // (Con una pasarela real, aquí además se anula la autorización.)
     const bill = await loadOpenBill(db, staff.rid, tableId, true);
     if (!bill || bill.sessionId !== draft.sessionId || bill.gross !== draft.gross || bill.ordersInProgress > 0) {
       throw conflict('La cuenta cambió mientras se procesaba el pago. Vuelve a cobrar.', 'BILL_CHANGED');
     }
-
-    await db.query(
-      `INSERT INTO payments (invoice_id, method, amount, amount_received, change_due, status, reference, validated_by, validated_at)
-       VALUES ($1, $2, $3, $4, $5, 'APPROVED', $6, $7, now())`,
-      [draft.invoiceId, input.method, draft.totals.grandTotal, input.amountReceived, payment.changeDue, payment.reference, staff.sub],
-    );
-    await db.query(
-      `UPDATE invoices SET status = 'ISSUED', invoice_number = $2, cufe = $3, provider = $4, provider_response = $5, issued_at = $6
-        WHERE id = $1`,
-      [draft.invoiceId, invoiceNumber, eInvoice.cufe, eInvoice.provider, JSON.stringify(eInvoice.raw), issuedAt],
-    );
-    await db.query('DELETE FROM cart_items WHERE session_id = $1', [draft.sessionId]);
-    await db.query('UPDATE waiter_calls SET attended_at = now(), attended_by = $2 WHERE session_id = $1 AND attended_at IS NULL', [draft.sessionId, staff.sub]);
-    // El trigger de la base de datos verifica aquí que el pago aprobado cubra la factura emitida.
-    await db.query(`UPDATE table_sessions SET closed_at = now(), closed_by = $2, close_reason = 'PAID' WHERE id = $1`, [draft.sessionId, staff.sub]);
-    await refreshTableStatus(db, tableId);
+    const result = await issueInvoice(db, restaurant, {
+      target: { sessionId: draft.sessionId, tableId },
+      totals: draft.totals,
+      customer: { name: input.customerName, doc: input.customerDoc, email: input.customerEmail },
+      payment: {
+        method: input.method,
+        amountReceived: input.amountReceived,
+        changeDue: payment.changeDue,
+        reference: payment.reference!,
+        provider: 'POS',
+        validatedBy: staff.sub,
+      },
+    });
+    await closePaidSession(db, draft.sessionId, tableId, staff.sub);
+    return result;
   });
 
   // 4) Avisos en tiempo real
-  const table = await publishTable(staff.rid, tableId);
-  emit(rooms.session(draft.sessionId), 'session:closed', { reason: 'PAID', invoiceNumber, grandTotal: draft.totals.grandTotal });
-  getIo().in(rooms.session(draft.sessionId)).socketsLeave(rooms.session(draft.sessionId));
-  emit(rooms.staff(staff.rid), 'invoice:issued', { invoiceNumber, tableNumber: table.number, grandTotal: draft.totals.grandTotal });
+  const table = await publishTableClosed(staff.rid, tableId, draft.sessionId, issued.invoiceNumber, draft.totals.grandTotal);
 
   return {
-    id: draft.invoiceId,
-    invoiceNumber,
+    id: issued.invoiceId,
+    invoiceNumber: issued.invoiceNumber,
     tableNumber: table.number,
     subtotal: draft.totals.subtotal,
     taxName: draft.totals.taxName,
@@ -231,10 +358,10 @@ export async function payAndClose(staff: StaffClaims, tableId: string, input: Pa
     tipTotal: draft.totals.tipTotal,
     grandTotal: draft.totals.grandTotal,
     customerName: input.customerName || 'Consumidor final',
-    customerDoc,
-    cufe: eInvoice.cufe,
-    issuedAt: issuedAt.toISOString(),
+    customerDoc: input.customerDoc || '222222222222',
+    cufe: issued.cufe,
+    issuedAt: issued.issuedAt.toISOString(),
     payment: { method: input.method, amountReceived: input.amountReceived, changeDue: payment.changeDue, reference: payment.reference! },
-    simulated: eInvoice.provider === 'MOCK',
+    simulated: issued.simulated,
   };
 }

@@ -4,6 +4,7 @@ export class ApiError extends Error {
     public status: number,
     public code: string,
     message: string,
+    public details?: any, // información extra del backend (p. ej. el código de seguimiento si la pasarela falló)
   ) {
     super(message);
   }
@@ -37,7 +38,7 @@ async function request<T>(method: string, path: string, { token, body }: Request
 
   const data = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status, data?.error?.code ?? 'UNKNOWN', data?.error?.message ?? 'Algo salió mal. Inténtalo de nuevo.');
+    throw new ApiError(response.status, data?.error?.code ?? 'UNKNOWN', data?.error?.message ?? 'Algo salió mal. Inténtalo de nuevo.', data?.error?.details);
   }
   return data as T;
 }

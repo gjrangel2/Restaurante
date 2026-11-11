@@ -1,10 +1,10 @@
-import { Banknote, Check, CreditCard, Landmark, Link2, X } from 'lucide-react';
+import { Banknote, Check, CreditCard, Landmark, Link2, LoaderCircle, UserPlus, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '../../components/StaffShell';
 import { useToast } from '../../components/Toasts';
 import { api, errorMessage } from '../../lib/api';
-import { clock, elapsed, money } from '../../lib/format';
+import { ago, clock, elapsed, money } from '../../lib/format';
 import type { Invoice, Order, OrderStatus, PaymentMethod, RestaurantTable, TableDetail } from '../../lib/types';
 import { TABLE_STATUS, statusSentence } from './tableStatus';
 
@@ -126,7 +126,7 @@ export function TableDrawer({ table, token, now, refreshKey, onClose }: TableDra
                 <div className="flex items-center gap-3 rounded-2xl bg-state-calling p-4 text-white">
                   <div className="min-w-0 flex-1">
                     <p className="font-semibold">{statusSentence(table)}</p>
-                    <p className="text-sm text-white/80">hace {elapsed(session.call.createdAt, now)}</p>
+                    <p className="text-sm text-white/80">{ago(session.call.createdAt, now)}</p>
                   </div>
                   <button
                     type="button"
@@ -139,12 +139,38 @@ export function TableDrawer({ table, token, now, refreshKey, onClose }: TableDra
                 </div>
               )}
 
+              {session.lateGuests.length > 0 && (
+                <div className="flex items-center gap-3 rounded-2xl bg-state-occupied p-4 text-white" role="alert">
+                  <UserPlus className="h-6 w-6 shrink-0" aria-hidden />
+                  <div className="min-w-0 flex-1">
+                    <p className="font-semibold">
+                      {session.lateGuests.map((g) => g.alias).join(', ')} {session.lateGuests.length === 1 ? 'llegó' : 'llegaron'} después del pedido
+                    </p>
+                    <p className="text-sm text-white/85">Pasa por la mesa para actualizar el pedido. Lo que pidan desde el QR llegará como comanda nueva.</p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy === 'late'}
+                    onClick={() => run('late', () => api.post(`/tables/${table.id}/late-guests/ack`, {}, token))}
+                    className="shrink-0 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-state-occupied disabled:opacity-60"
+                  >
+                    Entendido
+                  </button>
+                </div>
+              )}
+
+              {session.payingOnline && (
+                <p className="flex items-center gap-2 rounded-2xl bg-sunken p-4 text-sm font-medium" role="status">
+                  <LoaderCircle className="h-4 w-4 animate-spin" aria-hidden /> Un cliente está pagando la cuenta en línea. La mesa se cierra sola al aprobarse.
+                </p>
+              )}
+
               {detail && detail.guests.length > 0 && (
                 <div>
                   <h3 className="mb-2 text-sm font-semibold text-ink-soft">En la mesa</h3>
                   <ul className="flex flex-wrap gap-1.5">
                     {detail.guests.map((guest) => (
-                      <li key={guest.id} className="flex items-center gap-1.5 rounded-full bg-sunken px-2.5 py-1 text-sm">
+                      <li key={guest.id} className={`flex items-center gap-1.5 rounded-full px-2.5 py-1 text-sm ${session.lateGuests.some((g) => g.id === guest.id) ? 'bg-state-occupied/15 ring-1 ring-state-occupied' : 'bg-sunken'}`}>
                         <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: guest.color }} aria-hidden /> {guest.alias}
                       </li>
                     ))}
@@ -379,7 +405,9 @@ function Checkout({ detail, busy, onPay }: { detail: TableDetail; busy: boolean;
       </dl>
 
       {!bill.canCharge ? (
-        <p className="mt-3 text-sm text-ink-soft">Para cobrar, primero entrega o rechaza las comandas en curso.</p>
+        <p className="mt-3 text-sm text-ink-soft">
+          {bill.onlinePayment ? 'Hay un pago en línea en curso: espera a que termine o a que venza.' : 'Para cobrar, primero entrega o rechaza las comandas en curso.'}
+        </p>
       ) : !open ? (
         <Button className="mt-4 w-full" onClick={() => setOpen(true)}>
           Cobrar

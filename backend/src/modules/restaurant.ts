@@ -15,12 +15,22 @@ export interface Restaurant {
   pricesIncludeTax: boolean;
   suggestedTipRate: number;
   invoicePrefix: string;
+  address: string | null;
+  phone: string | null;
+  lat: number | null;
+  lng: number | null;
+  deliveryEnabled: boolean;
+  pickupEnabled: boolean;
+  deliveryMinOrder: number;
+  deliveryPrepMinutes: number;
 }
 
 const SELECT = `
   SELECT id, slug, name, legal_name AS "legalName", tax_id AS "taxId", timezone, currency,
          tax_name AS "taxName", tax_rate AS "taxRate", prices_include_tax AS "pricesIncludeTax",
-         suggested_tip_rate AS "suggestedTipRate", invoice_prefix AS "invoicePrefix"
+         suggested_tip_rate AS "suggestedTipRate", invoice_prefix AS "invoicePrefix",
+         address, phone, lat, lng, delivery_enabled AS "deliveryEnabled", pickup_enabled AS "pickupEnabled",
+         delivery_min_order AS "deliveryMinOrder", delivery_prep_minutes AS "deliveryPrepMinutes"
     FROM restaurants`;
 
 export async function getRestaurant(id: string): Promise<Restaurant> {
@@ -33,6 +43,7 @@ export async function getRestaurant(id: string): Promise<Restaurant> {
  * Resolución de tenant para las rutas públicas. Hoy: un restaurante por
  * despliegue (DEFAULT_RESTAURANT_SLUG). En el SaaS multi-restaurante, este es
  * el único punto que cambia: resolver por subdominio (fogon.tudominio.com).
+ * Lo usan la mesa (/mesa/12), los domicilios (/domicilios) y los webhooks de pago.
  */
 export async function getPublicRestaurant(): Promise<Restaurant> {
   const restaurant = await queryOne<Restaurant>(`${SELECT} WHERE slug = $1`, [config.defaultRestaurantSlug]);

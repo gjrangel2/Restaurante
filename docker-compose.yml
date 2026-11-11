@@ -52,6 +52,19 @@ services:
       JWT_SECRET: ${JWT_SECRET:-solo-para-desarrollo-cambia-este-secreto}
       DEFAULT_RESTAURANT_SLUG: ${DEFAULT_RESTAURANT_SLUG:-fogon}
       MIGRATIONS_DIR: /app/migrations
+      # Dirección pública HTTPS (para pasarelas reales y sus webhooks). Vacía = la de la página.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Mapa
+      MAP_TILE_URL: ${MAP_TILE_URL:-}
+      MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
+      # Pagos en línea. Sin credenciales, todo pasa por la pasarela de pruebas (sin dinero real).
+      PAYMENTS_FORCE_TEST: ${PAYMENTS_FORCE_TEST:-false}
+      WOMPI_PUBLIC_KEY: ${WOMPI_PUBLIC_KEY:-}
+      WOMPI_INTEGRITY_SECRET: ${WOMPI_INTEGRITY_SECRET:-}
+      WOMPI_EVENTS_SECRET: ${WOMPI_EVENTS_SECRET:-}
+      MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN:-}
+      MP_WEBHOOK_SECRET: ${MP_WEBHOOK_SECRET:-}
+      PSE_PROVIDER: ${PSE_PROVIDER:-WOMPI}
       TZ: America/Bogota
     volumes:
       # Una sola copia de los scripts SQL: la carpeta del proyecto, en solo lectura.

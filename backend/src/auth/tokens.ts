@@ -1,7 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { config } from '../config.js';
 
-export type StaffRole = 'ADMIN' | 'WAITER' | 'KITCHEN';
+export type StaffRole = 'ADMIN' | 'WAITER' | 'KITCHEN' | 'COURIER';
 
 /** Token del personal: identidad + rol + restaurante (tenant). */
 export interface StaffClaims {

@@ -5,6 +5,8 @@ import { config } from './config.js';
 import { migrate } from './db/migrate.js';
 import { pool } from './db/pool.js';
 import { errorHandler, notFoundHandler } from './http.js';
+import { providerIsLive } from './payments/gateways.js';
+import { sweepExpiredPayments } from './payments/payments.service.js';
 import { initRealtime } from './realtime/gateway.js';
 import { api } from './routes.js';
 
@@ -32,7 +34,15 @@ if (config.runMigrations) {
 
 server.listen(config.port, () => {
   console.log(`[api] FrictionlessOrder escuchando en http://localhost:${config.port}`);
+  const live = Object.entries(providerIsLive).filter(([, isLive]) => isLive()).map(([name]) => name);
+  console.log(`[pagos] pasarelas en vivo: ${live.length ? live.join(', ') : 'ninguna (todo pasa por la pasarela de pruebas)'}`);
 });
+
+// Cada minuto: vencen los pagos en línea abandonados y se liberan sus mesas y pedidos.
+const sweeper = setInterval(() => {
+  sweepExpiredPayments().catch((err) => console.error('[pagos] error al limpiar pagos vencidos:', err));
+}, 60_000);
+sweeper.unref();
 
 // Apagado ordenado: deja de aceptar conexiones, cierra sockets y suelta el pool.
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {

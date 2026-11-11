@@ -5,6 +5,12 @@ import { money } from '../../lib/format';
 import type { CartLine, Guest, MenuCategory, Product, Promotion } from '../../lib/types';
 import type { SharedCart } from './useSharedCart';
 
+/**
+ * Lo que la carta necesita de un carrito. Lo cumplen el carrito compartido de
+ * la mesa (useSharedCart) y el carrito personal de domicilios (useLocalCart).
+ */
+export type MenuCart = Pick<SharedCart, 'add' | 'setQuantity' | 'myLine' | 'myQuantity' | 'othersWith'>;
+
 // ----------------------------------------------------------------------------
 // Comensales
 // ----------------------------------------------------------------------------
@@ -45,7 +51,7 @@ export function Stepper({ quantity, onChange, label, size = 'md' }: { quantity: 
 }
 
 /** Botón de agregar de la carta: un "+" que se convierte en − n + cuando ya llevo ese plato. */
-function QuickAdd({ product, cart }: { product: Product; cart: SharedCart }) {
+function QuickAdd({ product, cart }: { product: Product; cart: MenuCart }) {
   const mine = cart.myQuantity(product.id);
   const line = cart.myLine(product.id);
 
@@ -89,7 +95,7 @@ const SoldOut = () => <span className="rounded-full bg-tinta px-2.5 py-1 text-xs
 // ----------------------------------------------------------------------------
 interface ProductProps {
   product: Product;
-  cart: SharedCart;
+  cart: MenuCart;
   currency: string;
   highlighted: boolean; // el banner que lo anuncia acaba de traer al cliente hasta aquí
   onOpen: (product: Product) => void;

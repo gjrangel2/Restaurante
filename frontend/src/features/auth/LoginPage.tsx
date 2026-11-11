@@ -5,13 +5,14 @@ import { useAuth, useTheme } from '../../lib/session';
 import type { StaffRole } from '../../lib/types';
 import { STATUS_ORDER, TABLE_STATUS } from '../floor/tableStatus';
 
-export const HOME_BY_ROLE: Record<StaffRole, string> = { ADMIN: '/admin', WAITER: '/sala', KITCHEN: '/cocina' };
+export const HOME_BY_ROLE: Record<StaffRole, string> = { ADMIN: '/admin', WAITER: '/sala', KITCHEN: '/cocina', COURIER: '/repartidor' };
 
-// Cuentas del restaurante de demostración (db/migrations/V2). Quita este bloque al salir a producción.
+// Cuentas del restaurante de demostración (db/migrations/V2 y V5). Quita este bloque al salir a producción.
 const DEMO_ACCOUNTS = [
   { label: 'Gerencia', email: 'admin@demo.test' },
   { label: 'Sala', email: 'sala@demo.test' },
   { label: 'Cocina', email: 'cocina@demo.test' },
+  { label: 'Repartidor', email: 'repartidor@demo.test' },
 ];
 const DEMO_PASSWORD = 'demo1234';
 
@@ -115,7 +116,7 @@ export function LoginPage() {
           <div className="mt-8 rounded-2xl border border-dashed border-line p-4">
             <p className="text-sm font-medium">Cuentas de demostración</p>
             <p className="mt-0.5 text-sm text-ink-faint">Entra con un toque para probar cada rol.</p>
-            <div className="mt-3 grid grid-cols-3 gap-2">
+            <div className="mt-3 grid grid-cols-2 gap-2">
               {DEMO_ACCOUNTS.map((account) => (
                 <button
                   key={account.email}

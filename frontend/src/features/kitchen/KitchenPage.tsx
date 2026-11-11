@@ -1,4 +1,4 @@
-import { Check, CircleAlert, Flame, TriangleAlert } from 'lucide-react';
+import { Bike, Check, CircleAlert, Flame, ShoppingBag, TriangleAlert } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Button, Card, StaffShell } from '../../components/StaffShell';
 import { useToast } from '../../components/Toasts';
@@ -54,7 +54,7 @@ export function KitchenPage() {
   useSocketEvent<Order>(socket, 'order:updated', (order) => {
     const inKitchen = order.status === 'CONFIRMED' || order.status === 'PREPARING' || order.status === 'READY';
     const known = orders?.some((o) => o.id === order.id) ?? false;
-    if (inKitchen && !known) toast.show(`Comanda nueva: mesa ${order.tableNumber}`, { emoji: '🧾' });
+    if (inKitchen && !known) toast.show(`Comanda nueva: ${orderLabel(order).toLowerCase()}`, { emoji: order.channel === 'DINE_IN' ? '🧾' : '🛵' });
     setOrders((current) => {
       if (!current) return current;
       if (!inKitchen) return current.filter((o) => o.id !== order.id);
@@ -179,6 +179,13 @@ export function coverText(item: InventoryItem): string {
   return `alcanza para ${quantity(item.daysOfCover)} días`;
 }
 
+/** Nombre de la comanda en cocina: la mesa, o el código del domicilio. */
+export function orderLabel(order: Order): string {
+  if (order.channel === 'DELIVERY') return `Domicilio ${order.deliveryCode}`;
+  if (order.channel === 'PICKUP') return `Para recoger ${order.deliveryCode}`;
+  return `Mesa ${order.tableNumber}`;
+}
+
 export function AlertIcon({ level }: { level: InventoryItem['alertLevel'] }) {
   if (level === 'RED') return <CircleAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#d03b3b]" aria-label="Crítico" />;
   if (level === 'YELLOW') return <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0 text-[#c98500]" aria-label="Bajo" />;
@@ -193,7 +200,11 @@ function Ticket({ order, now, onItem, onBump }: { order: Order; now: number; onI
   return (
     <article className={`rounded-2xl border bg-surface p-4 ${late && order.status !== 'READY' ? 'border-state-calling' : 'border-line'}`}>
       <header className="mb-3 flex items-baseline gap-2">
-        <h3 className="font-display text-2xl font-bold leading-none">Mesa {order.tableNumber}</h3>
+        <h3 className="flex items-center gap-1.5 font-display text-2xl font-bold leading-none">
+          {order.channel === 'DELIVERY' && <Bike className="h-5 w-5 text-state-occupied" aria-label="Domicilio" />}
+          {order.channel === 'PICKUP' && <ShoppingBag className="h-5 w-5 text-state-occupied" aria-label="Para recoger" />}
+          {order.channel === 'DINE_IN' ? `Mesa ${order.tableNumber}` : order.deliveryCode}
+        </h3>
         <span className="text-sm tabular-nums text-ink-faint">#{order.number}</span>
         <span className={`ml-auto flex items-center gap-1 text-sm font-semibold tabular-nums ${late ? 'text-state-calling' : 'text-ink-soft'}`}>
           {late && <CircleAlert className="h-4 w-4" aria-hidden />}
@@ -247,7 +258,11 @@ function Ticket({ order, now, onItem, onBump }: { order: Order; now: number; onI
           Todo listo
         </Button>
       )}
-      {order.status === 'READY' && <p className="mt-3 text-center text-sm text-ink-faint">Sala ya fue avisada.</p>}
+      {order.status === 'READY' && (
+        <p className="mt-3 text-center text-sm text-ink-faint">
+          {order.channel === 'DELIVERY' ? 'Esperando al repartidor.' : order.channel === 'PICKUP' ? 'Esperando al cliente en el mostrador.' : 'Sala ya fue avisada.'}
+        </p>
+      )}
     </article>
   );
 }

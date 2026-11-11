@@ -1,4 +1,4 @@
-import { ChefHat, LayoutDashboard, LogOut, Map as MapIcon, Moon, Sun, type LucideIcon } from 'lucide-react';
+import { Bike, ChefHat, LayoutDashboard, LogOut, Map as MapIcon, Moon, Sun, type LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { NavLink } from 'react-router-dom';
 import { useAuth, useStaff, useTheme } from '../lib/session';
@@ -8,9 +8,10 @@ const NAV: Array<{ to: string; label: string; icon: LucideIcon; roles: StaffRole
   { to: '/admin', label: 'Gerencia', icon: LayoutDashboard, roles: ['ADMIN'] },
   { to: '/sala', label: 'Sala', icon: MapIcon, roles: ['ADMIN', 'WAITER'] },
   { to: '/cocina', label: 'Cocina', icon: ChefHat, roles: ['ADMIN', 'KITCHEN'] },
+  { to: '/despacho', label: 'Domicilios', icon: Bike, roles: ['ADMIN', 'WAITER'] },
 ];
 
-const ROLE_LABEL: Record<StaffRole, string> = { ADMIN: 'Gerencia', WAITER: 'Sala', KITCHEN: 'Cocina' };
+const ROLE_LABEL: Record<StaffRole, string> = { ADMIN: 'Gerencia', WAITER: 'Sala', KITCHEN: 'Cocina', COURIER: 'Repartidor' };
 
 /**
  * Marco común de las pantallas del personal: navegación según el rol,

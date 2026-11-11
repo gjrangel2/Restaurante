@@ -11,7 +11,7 @@ type Phase =
   | { kind: 'not-found' }
   | { kind: 'error'; message: string }
   | { kind: 'closed'; restaurant: RestaurantInfo } // mesa cerrada: pantalla de espera
-  | { kind: 'open'; restaurant: RestaurantInfo; token: string; guest: Guest }
+  | { kind: 'open'; restaurant: RestaurantInfo; token: string; guest: Guest; joinedLate: boolean }
   | { kind: 'thanks'; restaurant: RestaurantInfo; invoiceNumber?: string; grandTotal?: number };
 
 /**
@@ -41,7 +41,7 @@ export function CustomerApp() {
       const result = await api.post<JoinResponse>(`/public/tables/${tableNumber}/join`, previous ? { token: previous } : {});
       if (result.state === 'OPEN') {
         writeToken(storageKey, result.token);
-        setPhase({ kind: 'open', restaurant: result.restaurant, token: result.token, guest: result.guest });
+        setPhase({ kind: 'open', restaurant: result.restaurant, token: result.token, guest: result.guest, joinedLate: Boolean(result.joinedLate) });
       } else {
         writeToken(storageKey, null);
         setPhase((current) => (current.kind === 'thanks' ? current : { kind: 'closed', restaurant: result.restaurant }));
@@ -92,7 +92,17 @@ export function CustomerApp() {
 
   switch (phase.kind) {
     case 'open':
-      return <CustomerMenu key={phase.token} token={phase.token} me={phase.guest} tableNumber={tableNumber} restaurant={phase.restaurant} onSessionClosed={onSessionClosed} />;
+      return (
+        <CustomerMenu
+          key={phase.token}
+          token={phase.token}
+          me={phase.guest}
+          tableNumber={tableNumber}
+          restaurant={phase.restaurant}
+          joinedLate={phase.joinedLate}
+          onSessionClosed={onSessionClosed}
+        />
+      );
 
     case 'closed':
       return (
